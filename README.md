@@ -51,7 +51,7 @@ Poppy companies verify every request against the agent's published keys, so the 
 ## Library
 
 ```sh
-npm install github:karanrao/poppy-readiness#v0.1.0
+npm install github:karanrao/poppy-readiness
 ```
 
 ```ts
