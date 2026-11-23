@@ -112,7 +112,14 @@ export async function runChecks(o: RunOptions): Promise<void> {
       res = await fetcher.request(discoveryUrl, { followRedirects: true, headers: { accept: 'application/json' }, note: 'discovery' });
     } catch (err) {
       if (budgetStop(err)) return finish();
-      fail('A1', netDetail(err));
+      const blocked = err instanceof NetError && (err.code === 'timeout' || err.code === 'network') && !/resolve/.test(err.message);
+      fail(
+        'A1',
+        blocked
+          ? `${err instanceof NetError && err.code === 'timeout' ? `No answer within ${LIMITS.requestMs / 1000} seconds` : 'The connection was dropped'}. The file may be there but out of reach: bot protection on many sites holds back requests from cloud servers that don't look like a browser. Personal agents that run in the cloud would hit the same wall unless the company lets them through. Try opening ${discoveryUrl} in your browser to see whether the file exists.`
+          : netDetail(err),
+        `GET ${discoveryUrl} → ${err instanceof NetError && err.code === 'timeout' ? 'no answer' : 'connection failed'}`,
+      );
       skipRest('Depends on poppy.json, which couldn’t be read.');
       return finish();
     }

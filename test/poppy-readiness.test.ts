@@ -573,3 +573,13 @@ test('E13 uses a missing client metadata URL next to the client_id', async () =>
   const { checks } = await run({ verify: 'full' });
   assert.equal(checks.get('E13')!.status, 'pass');
 });
+
+test('a discovery timeout explains likely bot protection', async () => {
+  const events: RunEvent[] = [];
+  const hang = async () => new Promise<Response>((_, rej) => setTimeout(() => rej(Object.assign(new Error('t'), { name: 'TimeoutError' })), 50));
+  await runChecks({ domain: 'slow.example.com', identity: IDENTITY, roots: KEYS.roots, emit: (e) => events.push(e), fetcher: { fetchImpl: hang as any, lookup: publicLookup } });
+  const a1 = events.find((e) => e.type === 'check' && e.id === 'A1') as CheckEvent;
+  assert.equal(a1.status, 'fail');
+  assert.match(a1.detail!, /bot protection/);
+  assert.match(a1.http!, /no answer/);
+});
