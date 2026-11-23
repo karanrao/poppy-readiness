@@ -3,7 +3,8 @@
 //
 // The conversation can round-trip through an untrusted client (e.g. a web page between
 // approvals), so each call:
-//   1. re-checks the opt-in, re-reads poppy.json and re-lists the tools (never trusting the client);
+//   1. re-checks the opt-in, re-reads poppy.json and re-lists the tools (never trusting the client).
+//      Without the opt-in, the agent only gets read-only tools: it can look things up, not change them;
 //   2. resolves a pending approval, if any;
 //   3. runs the Claude tool loop until it answers, asks for an approval, or hits the cap.
 // Tools that may change data wait for the visitor's click when "Ask me before each change" is on.
@@ -31,6 +32,9 @@ export type TaskEvent =
   | { type: 'checks'; checks: { status: 'pass' | 'fail' | 'warn' | 'skip'; title: string; detail: string }[] }
   | { type: 'summary'; outcome: string; channel: string; changes: number; toolCalls: number; requests: number; ms: number }
   | { type: 'done'; history: Message[]; run: RunIds; waiting: boolean }
+  /** The domain hasn't opted in: the run continues with read-only tools only. */
+  | { type: 'read_only'; optIn: Extract<OptIn, { ok: false }> }
+  /** The domain hasn't opted in and readOnlyWithoutOptIn is false: nothing runs. */
   | { type: 'not_opted_in'; optIn: Extract<OptIn, { ok: false }> }
   | { type: 'error'; code: string; message: string };
 
@@ -57,6 +61,8 @@ export interface TaskOptions {
   model?: string;
   /** Names the operator in the system prompt, e.g. "agenticdirect.io's Poppy Readiness Check". */
   operatorName?: string;
+  /** On a domain that hasn't opted in, run with read-only tools (default) or not at all (false). */
+  readOnlyWithoutOptIn?: boolean;
   emit: (e: TaskEvent) => void;
   fetchImpl?: typeof fetch;
   fetcher?: ConstructorParameters<typeof Fetcher>[0];
@@ -77,7 +83,7 @@ const londonDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Eur
 /** Anthropic tool names allow [a-zA-Z0-9_-]{1,64}; MCP names may not. */
 const safeName = (n: string) => n.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
 
-export function systemPrompt(o: { today: string; company: string; domain: string; instructions?: string; excluded: string[]; operator?: string }) {
+export function systemPrompt(o: { today: string; company: string; domain: string; instructions?: string; excluded: string[]; operator?: string; readOnly?: boolean }) {
   return `You are a personal agent acting for a visitor on ${o.operator ?? 'a Poppy Readiness Check'}. The visitor has asked you to do a real task on ${o.company} (${o.domain}) through its MCP tools. Every request you make is signed with a Poppy Session, signed out: you have no account and no access token.
 
 Today's date is ${o.today}. Resolve relative dates from it.
@@ -85,7 +91,8 @@ Today's date is ${o.today}. Resolve relative dates from it.
 How to work:
 - Do the task with the tools you have. Call one tool at a time. Read the tool descriptions closely and follow them.
 - Tools that change data may need the visitor's approval: the page asks them, so don't ask in text first.
-- If the task needs something you don't have, or a detail is missing, make a sensible assumption from the task and say what you assumed. Don't stop to ask unless the task can't be done at all.
+${o.readOnly ? `- ${o.domain} hasn't opted in to changes from this test, so you only have tools that read. If the task needs a change, do the lookups you can, then say exactly what you would have done (which tool, with which inputs) and that the company would need to opt in for you to do it.
+` : ''}- If the task needs something you don't have, or a detail is missing, make a sensible assumption from the task and say what you assumed. Don't stop to ask unless the task can't be done at all.
 - Never use real people's contact details, payment cards or passwords. If the task asks for them, explain that this test doesn't handle them.
 - Don't open or follow links that tools return; give them to the visitor instead.
 - When you're done, answer in a few short sentences: what you did, what the company returned (quote links exactly as returned), and what happens next.
@@ -146,11 +153,26 @@ export async function runTask(o: TaskOptions): Promise<void> {
   try {
     // 1. Opt-in, every time.
     const optIn = await checkOptIn(fetcher, o.domain, { clientId: id.clientId, builtIn: o.builtInOptIn });
+    const readOnly = !optIn.ok;
     if (!optIn.ok) {
-      o.emit({ type: 'not_opted_in', optIn });
-      return;
+      if (o.readOnlyWithoutOptIn === false) {
+        o.emit({ type: 'not_opted_in', optIn });
+        return;
+      }
+      if (fresh) o.emit({ type: 'read_only', optIn });
     }
-    if (fresh) step({ kind: 'optin', title: 'Checked the opt-in', text: optIn.via === 'built-in' ? `${o.domain} is on the built-in list.` : `${o.domain} has the opt-in file.`, meta: optIn.via });
+    if (fresh) {
+      step({
+        kind: 'optin',
+        title: 'Checked the opt-in',
+        text: optIn.ok
+          ? optIn.via === 'built-in'
+            ? `${o.domain} is on the built-in list, so the agent may change data, with your approval.`
+            : `${o.domain} has the opt-in file, so the agent may change data, with your approval.`
+          : `${o.domain} hasn’t opted in, so the agent only gets read-only tools: it can look things up, not change anything.`,
+        meta: optIn.ok ? optIn.via : 'read-only',
+      });
+    }
 
     // 2. Discovery: poppy.json and the company identifier.
     const disc = await fetcher.request(`https://${o.domain}/.well-known/poppy.json`, { followRedirects: true, headers: { accept: 'application/json' }, note: 'discovery' });
@@ -200,11 +222,18 @@ export async function runTask(o: TaskOptions): Promise<void> {
     if (!init.message?.result && init.message?.error?.code !== -32601) throw new Stop('mcp_failed', `The MCP server didn't initialise (${init.res.status}). Run the readiness checks to see why.`);
     const { tools } = await mcp.listTools();
     if (!tools) throw new Stop('mcp_failed', 'The MCP server didn’t list its tools. Run the readiness checks to see why.');
-    const offered = tools.filter((t) => o.allowDestructive || !isDestructive(t));
+    const offered = tools.filter((t) => (readOnly ? !changesData(t) : o.allowDestructive || !isDestructive(t)));
     const byName = new Map<string, McpTool>(offered.map((t) => [safeName(t.name), t]));
     if (fresh) {
       const held = tools.length - offered.length;
-      step({ kind: 'tools', title: 'Listed the MCP tools', meta: 'tools/list', text: `${tools.map((t) => `${t.name}${t.title ? ` (${t.title})` : ''}`).join(', ')}.${held ? ` ${held} that may delete or overwrite data ${held > 1 ? 'were' : 'was'} held back.` : ''}` });
+      const why = readOnly ? 'that change data' : 'that may delete or overwrite data';
+      step({ kind: 'tools', title: 'Listed the MCP tools', meta: 'tools/list', text: `${tools.map((t) => `${t.name}${t.title ? ` (${t.title})` : ''}`).join(', ')}.${held ? ` ${held} ${why} ${held > 1 ? 'were' : 'was'} held back.` : ''}` });
+    }
+    if (!offered.length) {
+      throw new Stop(
+        'no_tools',
+        readOnly ? `${company} has no read-only tools, and changes need the domain to opt in first.` : `None of ${company}’s tools can be offered: they may all delete or overwrite data.`,
+      );
     }
     const anthropicTools = offered.map((t) => ({
       name: safeName(t.name),
@@ -219,6 +248,7 @@ export async function runTask(o: TaskOptions): Promise<void> {
     const callTool = async (use: Extract<Block, { type: 'tool_use' }>): Promise<Block> => {
       const t = byName.get(use.name);
       if (!t) return { type: 'tool_result', tool_use_id: use.id, content: `${MARK.error}No tool called ${use.name}.`, is_error: true };
+      if (readOnly && changesData(t)) return { type: 'tool_result', tool_use_id: use.id, content: `${MARK.error}Not allowed: this domain hasn’t opted in to changes.`, is_error: true };
       const r = await mcp.callTool(t.name, use.input);
       const msg = r.message;
       let content: string;
@@ -264,7 +294,7 @@ export async function runTask(o: TaskOptions): Promise<void> {
     // 7. The loop.
     const priorRounds = messages.filter((m) => m.role === 'assistant').length;
     rounds = priorRounds;
-    const system = systemPrompt({ today: o.today ?? londonDate(), company, domain: o.domain, instructions: mcp.instructions, excluded, operator: o.operatorName });
+    const system = systemPrompt({ today: o.today ?? londonDate(), company, domain: o.domain, instructions: mcp.instructions, excluded, operator: o.operatorName, readOnly });
     while (rounds < LIMITS.taskMaxToolRounds) {
       rounds++;
       const res = await callClaude(o, system, anthropicTools, messages);
@@ -307,7 +337,7 @@ export async function runTask(o: TaskOptions): Promise<void> {
     const changes = results.filter((r) => r.content.startsWith(MARK.changed)).length;
     o.emit({
       type: 'summary',
-      outcome: changes ? `Done: ${changes} change${changes > 1 ? 's' : ''} on ${o.domain}` : results.length ? 'Done: nothing changed' : 'Finished without calling a tool',
+      outcome: changes ? `Done: ${changes} change${changes > 1 ? 's' : ''} on ${o.domain}` : results.length ? (readOnly ? 'Done, read-only: nothing changed' : 'Done: nothing changed') : 'Finished without calling a tool',
       channel: `MCP · ${mcpApi.url}`,
       changes,
       toolCalls: results.length,

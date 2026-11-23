@@ -10,7 +10,7 @@ export interface Identity {
   userAgent?: string;
 }
 
-export const DEFAULT_USER_AGENT = 'poppy-readiness/0.1 (+https://github.com/karanrao/poppy-readiness)';
+export const DEFAULT_USER_AGENT = 'poppy-readiness/0.2 (+https://github.com/karanrao/poppy-readiness)';
 
 /** Protocol versions this library speaks (newest first). */
 export const VERSIONS = ['1.0'] as const;

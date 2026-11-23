@@ -72,12 +72,12 @@ Events are `check` (one per check), `log` (one per request, with Session JWTs de
 
 `runTask` has Claude do a real task through the company's MCP tools, with every request signed with a Poppy Session. It reports each step, the answer, and a few checks: whether it found a tool, whether its arguments were valid first time, whether the Session was accepted, whether changes stayed within what was allowed, whether the answer's links came from the tool results, and whether it finished within the step limit.
 
-Real tasks create real data on someone's site, so they only run on domains that have opted in:
+Real tasks run on any domain, but **read-only unless the domain has opted in**. On a domain without the opt-in, the agent is only offered tools marked `readOnlyHint`: it can look things up, but not change anything. A `read_only` event says so and carries the file the company would add. Changing data needs the domain's go-ahead, because those writes land on someone else's site under your agent's name. A domain counts as opted in if:
 
 - Domains you pass in `builtInOptIn`: your own sites.
 - Any domain serving `/.well-known/poppy-readiness.txt` with a line `real-tasks: <code>`, where the code comes from `optInCode(domain, clientId)`. Consent is per agent: a company that opts in to one operator's checker hasn't opted in to yours. The file can hold one line per agent.
 
-With `askBeforeChanges`, any tool not marked `readOnlyHint` stops the run with a `confirm` event. Call `runTask` again with the returned `history`, `run` and a `decision`, and it continues. Tools that may delete or overwrite data are never offered unless `allowDestructive` is set. MCP treats every tool that isn't read-only as possibly destructive unless it says `destructiveHint: false`. Every call re-checks the opt-in and re-lists the tools, so a history passed back by a client is never trusted.
+With `askBeforeChanges`, any tool not marked `readOnlyHint` stops the run with a `confirm` event. Call `runTask` again with the returned `history`, `run` and a `decision`, and it continues. Tools that may delete or overwrite data are never offered unless `allowDestructive` is set. MCP treats every tool that isn't read-only as possibly destructive unless it says `destructiveHint: false`. Every call re-checks the opt-in and re-lists the tools, so a history passed back by a client is never trusted. Set `readOnlyWithoutOptIn: false` to refuse to run at all on domains that haven't opted in.
 
 ## Safety
 

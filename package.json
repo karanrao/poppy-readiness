@@ -1,6 +1,6 @@
 {
   "name": "poppy-readiness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tests a company's Personal Agent Protocol (Poppy) 1.0 setup by acting as a personal agent. Library and CLI.",
   "license": "MIT",
   "author": "Karan Rao",

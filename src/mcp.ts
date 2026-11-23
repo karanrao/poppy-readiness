@@ -75,7 +75,7 @@ export class McpClient {
     const r = await this.rpc('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'poppy-readiness', version: '0.1.0' },
+      clientInfo: { name: 'poppy-readiness', version: '0.2.0' },
     });
     const result = r.message?.result;
     if (result) {
