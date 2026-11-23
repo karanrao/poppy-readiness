@@ -1,0 +1,37 @@
+{
+  "name": "poppy-readiness",
+  "version": "0.1.0",
+  "description": "Tests a company's Personal Agent Protocol (Poppy) 1.0 setup by acting as a personal agent. Library and CLI.",
+  "license": "MIT",
+  "author": "Karan Rao",
+  "homepage": "https://agenticdirect.io/projects/poppy-readiness",
+  "repository": { "type": "git", "url": "git+https://github.com/karanrao/poppy-readiness.git" },
+  "keywords": ["poppy", "personal-agent-protocol", "ai-agents", "mcp", "conformance", "testing"],
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "poppy-readiness": "dist/cli.js" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./catalogue": { "types": "./dist/catalogue.d.ts", "default": "./dist/catalogue.js" },
+    "./report": { "types": "./dist/report.d.ts", "default": "./dist/report.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "jose": "6.2.18",
+    "undici": "7.30.2",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
